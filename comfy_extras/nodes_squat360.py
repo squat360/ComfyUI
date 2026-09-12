@@ -319,11 +319,59 @@ class Squat360FormAdvice:
         return (advice_text, advice_json, max(0, score))
 
 
+class Squat360AssistantBundle:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "athlete_name": ("STRING", {"default": "Athlete"}),
+                "goal": (["strength", "hypertrophy", "conditioning"], {"default": "strength"}),
+                "weight_kg": ("FLOAT", {"default": 75.0, "min": 35.0, "max": 200.0, "step": 0.5}),
+                "diet_preference": (["high_protein_omnivore", "balanced_omnivore", "vegetarian", "plant_based"], {"default": "high_protein_omnivore"}),
+                "days_per_week": ("INT", {"default": 3, "min": 2, "max": 6, "step": 1}),
+                "depth_cue": (["none", "cue", "warning"], {"default": "none"}),
+                "knee_cue": (["none", "cue", "warning"], {"default": "none"}),
+                "knee_or_elbow_angle": ("FLOAT", {"default": 85.0, "min": 20.0, "max": 180.0, "step": 1.0}),
+                "torso_angle": ("FLOAT", {"default": 65.0, "min": 0.0, "max": 180.0, "step": 1.0}),
+                "knee_valgus_detected": ("BOOLEAN", {"default": False}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "INT")
+    RETURN_NAMES = ("workout_summary", "food_plan_summary", "form_advice", "avatar_prompt", "technique_score")
+    FUNCTION = "build_bundle"
+    CATEGORY = "Squat360/AI Assistant"
+
+    def build_bundle(
+        self,
+        athlete_name,
+        goal,
+        weight_kg,
+        diet_preference,
+        days_per_week,
+        depth_cue,
+        knee_cue,
+        knee_or_elbow_angle,
+        torso_angle,
+        knee_valgus_detected,
+    ):
+        workout = Squat360WorkoutGenerator().generate_workout(
+            athlete_name, goal, depth_cue, knee_cue, days_per_week
+        )
+        food = Squat360FoodPlan().generate_food_plan(athlete_name, goal, weight_kg, diet_preference)
+        form = Squat360FormAdvice().evaluate_form("squat", knee_or_elbow_angle, torso_angle, knee_valgus_detected)
+        avatar = Squat360AvatarPrompt().generate_avatar_prompt(
+            athlete_name, goal, "clean_modern", "power_and_grit"
+        )
+        return (workout[0], food[0], form[0], avatar[0], form[2])
+
+
 NODE_CLASS_MAPPINGS = {
     "Squat360WorkoutGenerator": Squat360WorkoutGenerator,
     "Squat360AvatarPrompt": Squat360AvatarPrompt,
     "Squat360FoodPlan": Squat360FoodPlan,
     "Squat360FormAdvice": Squat360FormAdvice,
+    "Squat360AssistantBundle": Squat360AssistantBundle,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -331,4 +379,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Squat360AvatarPrompt": "Squat 360 Avatar Motivation Prompt",
     "Squat360FoodPlan": "Squat 360 Custom Food Plan",
     "Squat360FormAdvice": "Squat 360 Form Advice & Angle Evaluator",
+    "Squat360AssistantBundle": "Squat 360 AI Assistant Bundle",
 }

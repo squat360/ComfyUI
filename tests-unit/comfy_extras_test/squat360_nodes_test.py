@@ -5,6 +5,7 @@ from comfy_extras.nodes_squat360 import (
     Squat360AvatarPrompt,
     Squat360FoodPlan,
     Squat360FormAdvice,
+    Squat360AssistantBundle,
 )
 
 
@@ -94,3 +95,16 @@ class TestSquat360FormAdvice:
         text, json_str, score = node.evaluate_form("plank", 85.0, 145.0, False)
         assert "HIP_SAG_OR_PIKE" in text
         assert score == 75
+
+
+class TestSquat360AssistantBundle:
+    def test_bundle_wires_all_assistant_outputs(self):
+        node = Squat360AssistantBundle()
+        workout, food, form, avatar, score = node.build_bundle(
+            "Alex", "strength", 80.0, "high_protein_omnivore", 4, "cue", "warning", 110.0, 48.0, True
+        )
+        assert "Alex" in workout
+        assert "Target:" in food
+        assert "KNEE_VALGUS" in form
+        assert "Alex" in avatar
+        assert score == 40
