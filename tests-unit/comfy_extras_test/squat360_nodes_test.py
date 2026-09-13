@@ -5,6 +5,7 @@ from comfy_extras.nodes_squat360 import (
     Squat360AvatarPrompt,
     Squat360FoodPlan,
     Squat360FormAdvice,
+    Squat360SuperCoach,
     Squat360AssistantBundle,
 )
 
@@ -97,14 +98,73 @@ class TestSquat360FormAdvice:
         assert score == 75
 
 
+class TestSquat360SuperCoach:
+    def test_intensify_when_form_is_fresh_and_climbing(self):
+        node = Squat360SuperCoach()
+        history = json.dumps({
+            "sessions": [
+                {"reps": 5, "loadKg": 80, "formScore": 80, "cueCodes": []},
+                {"reps": 5, "loadKg": 82, "formScore": 82, "cueCodes": []},
+                {"reps": 5, "loadKg": 85, "formScore": 84, "cueCodes": []},
+                {"reps": 5, "loadKg": 87, "formScore": 90, "cueCodes": []},
+                {"reps": 5, "loadKg": 90, "formScore": 91, "cueCodes": []},
+                {"reps": 5, "loadKg": 92, "formScore": 92, "cueCodes": []},
+            ]
+        })
+        phase, briefing, reasoning, answer, cue, load, calories = node.decide(
+            "strength", 3, history, "[]", "should I add weight"
+        )
+        assert phase == "intensify"
+        assert load == 5.0
+        assert calories == 80
+        assert "Add about 5 kg" in answer
+        assert "fresh" in briefing
+        assert cue == ""
+
+    def test_deload_when_volume_and_form_drop(self):
+        node = Squat360SuperCoach()
+        history = json.dumps({
+            "sessions": [
+                {"reps": 5, "loadKg": 100, "formScore": 88, "cueCodes": []},
+                {"reps": 5, "loadKg": 70, "formScore": 75, "cueCodes": []},
+            ]
+        })
+        phase, briefing, reasoning, answer, cue, load, calories = node.decide(
+            "strength", 3, history, "[]", "I am tired"
+        )
+        assert phase == "deload"
+        assert load == -10.0
+        assert calories == -120
+        assert "deload" in answer.lower()
+
+    def test_rebuild_on_persistent_depth_cue(self):
+        node = Squat360SuperCoach()
+        history = json.dumps({
+            "sessions": [
+                {"reps": 5, "loadKg": 80, "formScore": 80, "cueCodes": ["DEPTH_CHECK"]},
+                {"reps": 5, "loadKg": 80, "formScore": 81, "cueCodes": ["DEPTH_CHECK"]},
+            ]
+        })
+        phase, briefing, reasoning, answer, cue, load, calories = node.decide(
+            "strength", 3, history, "[]", "is my depth the problem"
+        )
+        assert phase == "rebuild"
+        assert cue == "DEPTH_CHECK"
+        assert load == -5.0
+        assert "Depth is the limiter" in answer
+
+
 class TestSquat360AssistantBundle:
     def test_bundle_wires_all_assistant_outputs(self):
         node = Squat360AssistantBundle()
-        workout, food, form, avatar, score = node.build_bundle(
+        workout, food, form, avatar, score, briefing, reasoning = node.build_bundle(
             "Alex", "strength", 80.0, "high_protein_omnivore", 4, "cue", "warning", 110.0, 48.0, True
         )
         assert "Alex" in workout
+        assert "Super Coach" in workout
         assert "Target:" in food
         assert "KNEE_VALGUS" in form
         assert "Alex" in avatar
         assert score == 40
+        assert briefing
+        assert "rebuild" in briefing or "Selected" in reasoning

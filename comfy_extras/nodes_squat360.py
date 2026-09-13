@@ -319,6 +319,278 @@ class Squat360FormAdvice:
         return (advice_text, advice_json, max(0, score))
 
 
+def _mean(values):
+    if not values:
+        return None
+    return sum(values) / float(len(values))
+
+
+def _map_cue(code):
+    if code in ("DEPTH_INSUFFICIENT", "DEPTH_CHECK"):
+        return "DEPTH_CHECK"
+    if code in ("KNEE_VALGUS", "KNEE_TRACK"):
+        return "KNEE_TRACK"
+    if code == "TORSO_LEAN":
+        return "TORSO_LEAN"
+    return code
+
+
+def _parse_sessions(history_json):
+    if not history_json or not str(history_json).strip():
+        return []
+    try:
+        data = json.loads(history_json)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, dict):
+        sessions = data.get("sessions") or []
+    elif isinstance(data, list):
+        sessions = data
+    else:
+        return []
+    out = []
+    for item in sessions:
+        if not isinstance(item, dict):
+            continue
+        cues = item.get("cueCodes") or item.get("cues") or []
+        if isinstance(cues, str):
+            cues = [cues]
+        score = item.get("formScore")
+        load = item.get("loadKg")
+        if load is None:
+            load = item.get("load_kg")
+        out.append({
+            "reps": int(item.get("reps") or 0),
+            "loadKg": None if load is None else float(load),
+            "formScore": None if score is None else int(score),
+            "cueCodes": [_map_cue(str(c)) for c in cues][:8],
+        })
+    return out[-12:]
+
+
+def _parse_findings(findings_json):
+    if not findings_json or not str(findings_json).strip():
+        return []
+    try:
+        data = json.loads(findings_json)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, dict):
+        data = data.get("findings") or []
+    if not isinstance(data, list):
+        return []
+    out = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        out.append({
+            "code": _map_cue(str(item.get("code") or "")),
+            "severity": str(item.get("severity") or "info"),
+        })
+    return out
+
+
+def _decide_coach(goal, days_per_week, findings, history):
+    history = history[-12:]
+    scores = [h["formScore"] for h in history if h.get("formScore") is not None]
+    recent = scores[-3:]
+    prior = scores[-6:-3]
+    recent_mean = _mean(recent)
+    prior_mean = _mean(prior)
+
+    trend = "flat"
+    if recent_mean is not None and prior_mean is not None:
+        if recent_mean - prior_mean >= 4:
+            trend = "improving"
+        elif prior_mean - recent_mean >= 4:
+            trend = "declining"
+    elif recent_mean is not None and recent_mean < 70:
+        trend = "declining"
+    elif recent_mean is not None and recent_mean >= 88:
+        trend = "improving"
+
+    live_cues = [
+        f["code"] for f in findings
+        if f.get("severity") in ("cue", "flag", "warning")
+    ]
+    cue_hits = {}
+    for row in history:
+        for code in row.get("cueCodes") or []:
+            cue_hits[code] = cue_hits.get(code, 0) + 1
+    for code in live_cues:
+        cue_hits[code] = cue_hits.get(code, 0) + 2
+    persistent = sorted(cue_hits.items(), key=lambda item: (-item[1], item[0]))
+    persistent = [code for code, n in persistent if n >= 2]
+    priority_cue = persistent[0] if persistent else (live_cues[0] if live_cues else None)
+
+    last_two = history[-2:]
+    vols = [row["reps"] * (row["loadKg"] or 0) for row in last_two]
+    vol_drop = len(vols) == 2 and vols[0] > 0 and vols[1] < vols[0] * 0.8
+    score_drop = (
+        len(last_two) == 2
+        and last_two[0].get("formScore") is not None
+        and last_two[1].get("formScore") is not None
+        and last_two[1]["formScore"] < last_two[0]["formScore"] - 8
+    )
+    high_frequency = len(history) >= max(5, int(days_per_week) + 2)
+
+    recovery = "normal"
+    if vol_drop and score_drop:
+        recovery = "fatigued"
+    elif high_frequency and trend == "declining":
+        recovery = "fatigued"
+    elif trend == "improving" and (recent_mean or 0) >= 88:
+        recovery = "fresh"
+
+    phase = "accumulate"
+    if recovery == "fatigued" or (trend == "declining" and len(history) >= 4):
+        phase = "deload"
+    elif priority_cue in ("DEPTH_CHECK", "KNEE_TRACK", "TORSO_LEAN"):
+        phase = "rebuild"
+    elif recovery == "fresh" and trend == "improving" and goal == "strength":
+        phase = "intensify"
+    elif recovery == "fresh" and goal == "hypertrophy":
+        phase = "accumulate"
+
+    load_bias = 0.0
+    calorie_bias = 0
+    if phase == "intensify":
+        load_bias = 5.0
+        calorie_bias = 80
+    elif phase == "deload":
+        load_bias = -10.0
+        calorie_bias = -120
+    elif phase == "rebuild":
+        load_bias = -5.0
+        calorie_bias = 0
+    elif trend == "improving":
+        load_bias = 2.5
+        calorie_bias = 40
+
+    reasoning = []
+    if scores:
+        extra = f" (recent {recent_mean:.0f})" if recent_mean is not None else ""
+        reasoning.append(f"Form trend {trend} across {len(scores)} scored sessions{extra}.")
+    else:
+        reasoning.append("No scored history yet — opening week uses live camera cues only.")
+    reasoning.append(f"Recovery looks {recovery}{' (volume dropped last session)' if vol_drop else ''}.")
+    if priority_cue:
+        reasoning.append(f"Persistent cue: {priority_cue.replace('_', ' ').lower()}.")
+    reasoning.append(f"Selected {phase} for {goal} at {days_per_week} days/week.")
+
+    if phase == "deload":
+        closer = "Cut load and protect sleep this week."
+    elif phase == "rebuild":
+        closer = "Technique before kilos until the cue clears."
+    elif phase == "intensify":
+        closer = "Add a little load. Film one work set."
+    else:
+        closer = "Build clean volume. Keep depth honest on camera."
+    briefing = f"{goal} plan: {phase} block, recovery {recovery}, form {trend}. {closer}"
+
+    return {
+        "phase": phase,
+        "recovery": recovery,
+        "trend": trend,
+        "priorityCue": priority_cue or "",
+        "loadBiasKg": load_bias,
+        "calorieBias": calorie_bias,
+        "briefing": briefing,
+        "reasoning": reasoning,
+    }
+
+
+def _answer_coach_question(question, decision, goal):
+    q = question.strip().lower()
+    if not q:
+        return decision["briefing"]
+    if any(word in q for word in ("depth", "hole", "parallel", "box")):
+        if decision["priorityCue"] == "DEPTH_CHECK":
+            return "Depth is the limiter. Keep the box or tape until hip crease is repeatable, then add load."
+        return "Depth is not the main flag. Film a side set and keep the same stance markers."
+    if any(word in q for word in ("knee", "valgus", "cave")):
+        if decision["priorityCue"] == "KNEE_TRACK":
+            return "Knees need a front-camera week: banded walks, slow step-downs, then squat."
+        return "Knee tracking looks secondary. Still cue knees over second toe on the ascent."
+    if any(word in q for word in ("eat", "food", "calorie", "protein", "diet")):
+        bias = decision["calorieBias"]
+        sign = "+" if bias >= 0 else ""
+        return f"Eat for {goal}. This block biases {sign}{bias} kcal around the current target."
+    if any(word in q for word in ("deload", "tired", "fatigue", "sore", "sleep")):
+        if decision["phase"] == "deload" or decision["recovery"] == "fatigued":
+            return "Yes — treat this as a deload. Drop load, keep some movement, sleep more."
+        return f"Recovery is {decision['recovery']}. Train as written unless sleep tanks two nights in a row."
+    if any(word in q for word in ("weight", "kilo", "load", "pr", "progress")):
+        load = decision["loadBiasKg"]
+        if load > 0:
+            return f"Add about {load:g} kg only if the last filmed work set was clean."
+        if load < 0:
+            return f"Take {abs(load):g} kg off until form trend stops declining."
+        return "Hold load. Collect one more clean session before changing the bar."
+    return f"{decision['briefing']} Ask about depth, knees, food, fatigue, or load for a tighter call."
+
+
+def _workout_with_coach(summary, decision):
+    phase = decision["phase"]
+    load = decision["loadBiasKg"]
+    if phase == "deload":
+        suffix = f" Deload: leave {abs(load):g} kg on the bar and stop at RPE 6."
+    elif phase == "rebuild":
+        suffix = " Rebuild: pause reps and a target. Load is a tool, not the point."
+    elif phase == "intensify":
+        suffix = f" Intensify: add ~{load:g} kg if last work set was clean."
+    elif load > 0:
+        suffix = f" Progression: +{load:g} kg if depth held."
+    else:
+        suffix = ""
+    header = f"=== Super Coach: {phase.upper()} ===\n{decision['briefing']}\n\n"
+    return header + summary + suffix
+
+
+def _food_with_coach(summary, old_calories, decision):
+    new_calories = max(1400, int(old_calories + decision["calorieBias"]))
+    text = summary.replace(f"{old_calories} kcal", f"{new_calories} kcal", 1)
+    if decision["phase"] == "deload":
+        text += "\n  Super Coach: earlier dinner, 8h sleep target."
+    elif decision["phase"] == "intensify":
+        text += "\n  Super Coach: extra carb serving on squat day."
+    return text
+
+
+class Squat360SuperCoach:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "goal": (["strength", "hypertrophy", "conditioning"], {"default": "strength"}),
+                "days_per_week": ("INT", {"default": 3, "min": 1, "max": 6, "step": 1}),
+                "history_json": ("STRING", {"multiline": True, "default": "{\"sessions\":[]}"}),
+            },
+            "optional": {
+                "findings_json": ("STRING", {"multiline": True, "default": "[]"}),
+                "question": ("STRING", {"multiline": True, "default": ""}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "FLOAT", "INT")
+    RETURN_NAMES = ("phase", "briefing", "reasoning", "answer", "priority_cue", "load_bias_kg", "calorie_bias")
+    FUNCTION = "decide"
+    CATEGORY = "Squat360/AI Assistant"
+
+    def decide(self, goal, days_per_week, history_json, findings_json="[]", question=""):
+        decision = _decide_coach(goal, days_per_week, _parse_findings(findings_json), _parse_sessions(history_json))
+        answer = _answer_coach_question(question, decision, goal) if str(question).strip() else ""
+        return (
+            decision["phase"],
+            decision["briefing"],
+            " ".join(decision["reasoning"]),
+            answer,
+            decision["priorityCue"],
+            float(decision["loadBiasKg"]),
+            int(decision["calorieBias"]),
+        )
+
+
 class Squat360AssistantBundle:
     @classmethod
     def INPUT_TYPES(cls):
@@ -334,11 +606,15 @@ class Squat360AssistantBundle:
                 "knee_or_elbow_angle": ("FLOAT", {"default": 85.0, "min": 20.0, "max": 180.0, "step": 1.0}),
                 "torso_angle": ("FLOAT", {"default": 65.0, "min": 0.0, "max": 180.0, "step": 1.0}),
                 "knee_valgus_detected": ("BOOLEAN", {"default": False}),
-            }
+            },
+            "optional": {
+                "history_json": ("STRING", {"multiline": True, "default": ""}),
+                "question": ("STRING", {"multiline": True, "default": ""}),
+            },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "INT")
-    RETURN_NAMES = ("workout_summary", "food_plan_summary", "form_advice", "avatar_prompt", "technique_score")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "INT", "STRING", "STRING")
+    RETURN_NAMES = ("workout_summary", "food_plan_summary", "form_advice", "avatar_prompt", "technique_score", "briefing", "reasoning")
     FUNCTION = "build_bundle"
     CATEGORY = "Squat360/AI Assistant"
 
@@ -354,6 +630,8 @@ class Squat360AssistantBundle:
         knee_or_elbow_angle,
         torso_angle,
         knee_valgus_detected,
+        history_json="",
+        question="",
     ):
         workout = Squat360WorkoutGenerator().generate_workout(
             athlete_name, goal, depth_cue, knee_cue, days_per_week
@@ -363,7 +641,22 @@ class Squat360AssistantBundle:
         avatar = Squat360AvatarPrompt().generate_avatar_prompt(
             athlete_name, goal, "clean_modern", "power_and_grit"
         )
-        return (workout[0], food[0], form[0], avatar[0], form[2])
+        form_data = json.loads(form[1])
+        findings = list(form_data.get("findings") or [])
+        if depth_cue != "none":
+            findings.append({"code": "DEPTH_CHECK", "severity": "cue"})
+        if knee_cue != "none":
+            findings.append({"code": "KNEE_TRACK", "severity": "cue"})
+        decision = _decide_coach(goal, days_per_week, findings, _parse_sessions(history_json))
+        food_data = json.loads(food[1])
+        old_calories = int(food_data.get("macros", {}).get("calories") or 0)
+        workout_text = _workout_with_coach(workout[0], decision)
+        food_text = _food_with_coach(food[0], old_calories, decision)
+        briefing = decision["briefing"]
+        if str(question).strip():
+            answer = _answer_coach_question(question, decision, goal)
+            briefing = f"{briefing}\nQ: {question.strip()}\nA: {answer}"
+        return (workout_text, food_text, form[0], avatar[0], form[2], briefing, " ".join(decision["reasoning"]))
 
 
 NODE_CLASS_MAPPINGS = {
@@ -371,6 +664,7 @@ NODE_CLASS_MAPPINGS = {
     "Squat360AvatarPrompt": Squat360AvatarPrompt,
     "Squat360FoodPlan": Squat360FoodPlan,
     "Squat360FormAdvice": Squat360FormAdvice,
+    "Squat360SuperCoach": Squat360SuperCoach,
     "Squat360AssistantBundle": Squat360AssistantBundle,
 }
 
@@ -379,5 +673,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Squat360AvatarPrompt": "Squat 360 Avatar Motivation Prompt",
     "Squat360FoodPlan": "Squat 360 Custom Food Plan",
     "Squat360FormAdvice": "Squat 360 Form Advice & Angle Evaluator",
+    "Squat360SuperCoach": "Squat 360 Super Coach",
     "Squat360AssistantBundle": "Squat 360 AI Assistant Bundle",
 }
