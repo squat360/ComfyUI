@@ -591,6 +591,71 @@ class Squat360SuperCoach:
         )
 
 
+CLOUD_LLM_SYSTEM = (
+    "You are Squat 360 Super Coach. You augment a human coach. Not medical advice. "
+    "Stay inside the provided JSON. Do not change phase, loadBiasKg, or calorieBias. "
+    'Reply with JSON only: {"briefing":"...","answer":"..."}'
+)
+
+
+class Squat360CloudLlmPrompt:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "goal": (["strength", "hypertrophy", "conditioning"], {"default": "strength"}),
+                "briefing": ("STRING", {"multiline": True, "default": ""}),
+                "reasoning": ("STRING", {"multiline": True, "default": ""}),
+            },
+            "optional": {
+                "question": ("STRING", {"multiline": True, "default": ""}),
+                "history_json": ("STRING", {"multiline": True, "default": ""}),
+                "phase": ("STRING", {"default": ""}),
+                "recovery": ("STRING", {"default": ""}),
+                "trend": ("STRING", {"default": ""}),
+                "priority_cue": ("STRING", {"default": ""}),
+                "load_bias_kg": ("FLOAT", {"default": 0.0, "min": -50.0, "max": 50.0, "step": 0.5}),
+                "calorie_bias": ("INT", {"default": 0, "min": -500, "max": 500, "step": 10}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("system_prompt", "user_prompt")
+    FUNCTION = "build"
+    CATEGORY = "Squat360/AI Assistant"
+
+    def build(
+        self,
+        goal,
+        briefing,
+        reasoning,
+        question="",
+        history_json="",
+        phase="",
+        recovery="",
+        trend="",
+        priority_cue="",
+        load_bias_kg=0.0,
+        calorie_bias=0,
+    ):
+        payload = {
+            "goal": goal,
+            "question": str(question).strip(),
+            "decision": {
+                "phase": phase,
+                "recovery": recovery,
+                "trend": trend,
+                "priorityCue": priority_cue,
+                "loadBiasKg": load_bias_kg,
+                "calorieBias": calorie_bias,
+                "briefing": briefing,
+                "reasoning": reasoning,
+            },
+            "history": _parse_sessions(history_json),
+        }
+        return (CLOUD_LLM_SYSTEM, json.dumps(payload, indent=2))
+
+
 class Squat360AssistantBundle:
     @classmethod
     def INPUT_TYPES(cls):
@@ -665,6 +730,7 @@ NODE_CLASS_MAPPINGS = {
     "Squat360FoodPlan": Squat360FoodPlan,
     "Squat360FormAdvice": Squat360FormAdvice,
     "Squat360SuperCoach": Squat360SuperCoach,
+    "Squat360CloudLlmPrompt": Squat360CloudLlmPrompt,
     "Squat360AssistantBundle": Squat360AssistantBundle,
 }
 
@@ -674,5 +740,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Squat360FoodPlan": "Squat 360 Custom Food Plan",
     "Squat360FormAdvice": "Squat 360 Form Advice & Angle Evaluator",
     "Squat360SuperCoach": "Squat 360 Super Coach",
+    "Squat360CloudLlmPrompt": "Squat 360 Cloud LLM Prompt",
     "Squat360AssistantBundle": "Squat 360 AI Assistant Bundle",
 }

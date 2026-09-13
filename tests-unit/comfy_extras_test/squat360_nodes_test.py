@@ -6,6 +6,7 @@ from comfy_extras.nodes_squat360 import (
     Squat360FoodPlan,
     Squat360FormAdvice,
     Squat360SuperCoach,
+    Squat360CloudLlmPrompt,
     Squat360AssistantBundle,
 )
 
@@ -152,6 +153,31 @@ class TestSquat360SuperCoach:
         assert cue == "DEPTH_CHECK"
         assert load == -5.0
         assert "Depth is the limiter" in answer
+
+
+class TestSquat360CloudLlmPrompt:
+    def test_builds_system_and_user_prompts_without_network(self):
+        node = Squat360CloudLlmPrompt()
+        system, user = node.build(
+            "strength",
+            "intensify this week",
+            "Form trend improving.",
+            "should I add weight",
+            json.dumps({"sessions": [{"reps": 5, "loadKg": 90, "formScore": 92, "cueCodes": []}]}),
+            "intensify",
+            "fresh",
+            "improving",
+            "",
+            5.0,
+            80,
+        )
+        assert "Stay inside the provided JSON" in system
+        data = json.loads(user)
+        assert data["goal"] == "strength"
+        assert data["question"] == "should I add weight"
+        assert data["decision"]["phase"] == "intensify"
+        assert data["decision"]["loadBiasKg"] == 5.0
+        assert data["history"][0]["formScore"] == 92
 
 
 class TestSquat360AssistantBundle:
