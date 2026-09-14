@@ -572,8 +572,8 @@ class Squat360SuperCoach:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "FLOAT", "INT")
-    RETURN_NAMES = ("phase", "briefing", "reasoning", "answer", "priority_cue", "load_bias_kg", "calorie_bias")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "FLOAT", "INT", "STRING", "STRING")
+    RETURN_NAMES = ("phase", "briefing", "reasoning", "answer", "priority_cue", "load_bias_kg", "calorie_bias", "recovery", "trend")
     FUNCTION = "decide"
     CATEGORY = "Squat360/AI Assistant"
 
@@ -588,6 +588,8 @@ class Squat360SuperCoach:
             decision["priorityCue"],
             float(decision["loadBiasKg"]),
             int(decision["calorieBias"]),
+            decision["recovery"],
+            decision["trend"],
         )
 
 

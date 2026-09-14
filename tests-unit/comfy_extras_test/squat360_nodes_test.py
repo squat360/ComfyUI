@@ -112,7 +112,7 @@ class TestSquat360SuperCoach:
                 {"reps": 5, "loadKg": 92, "formScore": 92, "cueCodes": []},
             ]
         })
-        phase, briefing, reasoning, answer, cue, load, calories = node.decide(
+        phase, briefing, reasoning, answer, cue, load, calories, recovery, trend = node.decide(
             "strength", 3, history, "[]", "should I add weight"
         )
         assert phase == "intensify"
@@ -121,6 +121,8 @@ class TestSquat360SuperCoach:
         assert "Add about 5 kg" in answer
         assert "fresh" in briefing
         assert cue == ""
+        assert recovery == "fresh"
+        assert trend == "improving"
 
     def test_deload_when_volume_and_form_drop(self):
         node = Squat360SuperCoach()
@@ -130,7 +132,7 @@ class TestSquat360SuperCoach:
                 {"reps": 5, "loadKg": 70, "formScore": 75, "cueCodes": []},
             ]
         })
-        phase, briefing, reasoning, answer, cue, load, calories = node.decide(
+        phase, briefing, reasoning, answer, cue, load, calories, recovery, trend = node.decide(
             "strength", 3, history, "[]", "I am tired"
         )
         assert phase == "deload"
@@ -146,7 +148,7 @@ class TestSquat360SuperCoach:
                 {"reps": 5, "loadKg": 80, "formScore": 81, "cueCodes": ["DEPTH_CHECK"]},
             ]
         })
-        phase, briefing, reasoning, answer, cue, load, calories = node.decide(
+        phase, briefing, reasoning, answer, cue, load, calories, recovery, trend = node.decide(
             "strength", 3, history, "[]", "is my depth the problem"
         )
         assert phase == "rebuild"
